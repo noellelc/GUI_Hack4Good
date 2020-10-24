@@ -18,8 +18,71 @@ import gif from '../assets/ocr.gif'
 
 function Home() {
     const [view, setView] = useState('choose');
-    const [pdfFile, setPDFFile] = useState();
+    const [fileToUpload, setFile] = useState();
     const [video, setVideo] = useState();
+    const [statusText, setStatusText] = useState();
+
+    function resetState() {
+        setView('choose');
+        setFile(null);
+        setStatusText(null);
+    }
+
+    async function getSignedUrl() {
+        setView('waiting');
+        setStatusText('Uploading file...');
+
+        let signedPostData;
+        const body = {
+            "fileName": fileToUpload.name,
+            "fileType": fileToUpload.type,
+            "bucket": "devdiv-hackweek"
+        };
+
+        const options = {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        };
+
+        let initialResponse = await fetch(`https://34ckmy75i8.execute-api.us-west-2.amazonaws.com/DevTest/getsignedurl`, options);
+
+        let jsonResponse = await initialResponse.json();
+        if (jsonResponse && jsonResponse.statusCode === 200)
+        {
+            signedPostData = jsonResponse.body;
+        }
+
+        return signedPostData;
+    }
+
+    async function uploadFile(event) {
+        event.stopPropagation();
+
+        let presignedPostData = await getSignedUrl();
+        let deserializedPostData = JSON.parse(presignedPostData);
+        const url = deserializedPostData.signedURL.url;
+        const formData = new FormData();
+        Object.keys(deserializedPostData.signedURL.fields).forEach(key => {
+            formData.append(key, deserializedPostData.signedURL.fields[key]);
+        });
+        formData.append("file", fileToUpload);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url, true);
+        xhr.send(formData);
+        xhr.onload = function() {
+            if (this.status === 204) {
+                setStatusText('Translating file...');
+            }
+            else {
+                resetState();
+                // TODO: display some kind of error message indicating failure to upload
+            }
+        }
+    }
 
     const renderStepOne = () => {
         return (
@@ -37,8 +100,8 @@ function Home() {
                         <Row>
                             <Col>
                                 <Dropzone onDrop={acceptedFiles => {
-                                    console.debug(acceptedFiles[0]);
-                                    setPDFFile(acceptedFiles[0]);
+                                    console.log(acceptedFiles[0]);
+                                    setFile(acceptedFiles[0]);
                                 }}
                                 >
                                     {({ getRootProps, getInputProps, isDragActive }) => (
@@ -51,7 +114,7 @@ function Home() {
                                             }}>
                                             {isDragActive && <Badge variant="primary">Drop here</Badge>}
                                             <Card.Body>
-                                                <Card.Title>Upload a book PDF</Card.Title>
+                                                <Card.Title>Upload a book PDF or video file</Card.Title>
                                             </Card.Body>
                                             <Card.Img
                                                 variant="top"
@@ -72,17 +135,14 @@ function Home() {
                                                     upload from your computer	
                                                 </Button>	
                                                 <input {...getInputProps()} />	
-                                                {pdfFile?.name || ''}
+                                                {fileToUpload?.name || ''}
                                                 <Container>
                                                     <Row >
                                                         <Col />
                                                         <Col>
                                                             <Button
-                                                                disabled={!pdfFile?.path}
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    setView('pdfToTextLoading');
-                                                                }}
+                                                                disabled={!fileToUpload?.path}
+                                                                onClick={uploadFile}
                                                                 variant="success"
                                                             >
                                                                 Next
@@ -451,14 +511,11 @@ Integer id ullamcorper urna, efficitur gravida nulla. Aenean vel dictum libero. 
     }
 
     const renderOCRLoading = () => {
-        setTimeout(() => {
-            setView('editTextbook');
-        }, 5000);
         return (
             <>
                 <Container>
                     <img
-                        alt="Converting PDF to text"
+                        alt="Uploading and translating file..."
                         src={gif}
                         style={{
                             margin: 'auto',
@@ -468,7 +525,7 @@ Integer id ullamcorper urna, efficitur gravida nulla. Aenean vel dictum libero. 
                         style={{
                             textAlign: 'center'
                         }} >
-                        Converting PDF to text
+                        <p>{statusText}</p>
                     </div>
                 </Container>
             </>
@@ -478,7 +535,7 @@ Integer id ullamcorper urna, efficitur gravida nulla. Aenean vel dictum libero. 
     return (
         <>
             {view === 'choose' && renderStepOne()}
-            {(view === 'pdfToTextLoading') && renderOCRLoading()}
+            {view === 'waiting' && renderOCRLoading()}
             {(view === 'editTextbook' || view === 'editVideo') && renderEditorView()}
             {(view === 'downloadNarration' || view === 'downloadTranslation') && renderDowloadView()}
         </>
