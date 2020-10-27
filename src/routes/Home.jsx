@@ -21,23 +21,21 @@ function Home() {
     const [fileToUpload, setFile] = useState();
     const [video, setVideo] = useState();
     const [statusText, setStatusText] = useState();
+    const [errorMessage, setErrorMessage] = useState();
+    const [translatedContentStr, setTranslatedContentStr] = useState();
 
-    function resetState() {
+    function resetState(errorMessage) {
         setView('choose');
         setFile(null);
         setStatusText(null);
+        setErrorMessage(errorMessage);
     }
 
-    async function getSignedUrl() {
+    async function getSignedUrl(forDownload, body) {
         setView('waiting');
         setStatusText('Uploading file...');
 
         let signedPostData;
-        const body = {
-            "fileName": fileToUpload.name,
-            "fileType": fileToUpload.type,
-            "bucket": "devdiv-hackweek"
-        };
 
         const options = {
             method: 'POST',
@@ -47,12 +45,13 @@ function Home() {
             }
         };
 
-        let initialResponse = await fetch(`https://34ckmy75i8.execute-api.us-west-2.amazonaws.com/DevTest/getsignedurl`, options);
+        let initialResponse = await fetch(`https://34ckmy75i8.execute-api.us-west-2.amazonaws.com/DevTest/get${forDownload ? 'download' : 'signed'}url`, options);
 
         let jsonResponse = await initialResponse.json();
-        if (jsonResponse && jsonResponse.statusCode === 200)
-        {
+        if (jsonResponse && jsonResponse.statusCode === 200) {
             signedPostData = jsonResponse.body;
+        } else {
+            return false;
         }
 
         return signedPostData;
@@ -61,26 +60,108 @@ function Home() {
     async function uploadFile(event) {
         event.stopPropagation();
 
-        let presignedPostData = await getSignedUrl();
-        let deserializedPostData = JSON.parse(presignedPostData);
-        const url = deserializedPostData.signedURL.url;
-        const formData = new FormData();
-        Object.keys(deserializedPostData.signedURL.fields).forEach(key => {
-            formData.append(key, deserializedPostData.signedURL.fields[key]);
-        });
-        formData.append("file", fileToUpload);
+        const body = {
+            fileName: fileToUpload.name,
+            fileType: fileToUpload.type,
+            bucket: 'devdiv-hackweek',
+        };
 
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", url, true);
-        xhr.send(formData);
-        xhr.onload = function() {
-            if (this.status === 204) {
-                setStatusText('Translating file...');
+        let presignedPostData = await getSignedUrl(false, body);
+        if (presignedPostData)
+        {
+            let deserializedPostData = JSON.parse(presignedPostData);
+            const url = deserializedPostData.signedURL.url;
+            const formData = new FormData();
+            Object.keys(deserializedPostData.signedURL.fields).forEach(key => {
+                formData.append(key, deserializedPostData.signedURL.fields[key]);
+            });
+            let uniqueFileName = deserializedPostData.signedURL.fields['key'];
+            if (uniqueFileName.indexOf('videos/') === 0) {
+                uniqueFileName = uniqueFileName.substring(7);
             }
-            else {
-                resetState();
-                // TODO: display some kind of error message indicating failure to upload
+            let uniqueFileNameWithoutExt = uniqueFileName.substring(0, uniqueFileName.lastIndexOf('.'));
+            formData.append("file", fileToUpload);
+    
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", url, true);
+            xhr.send(formData);
+            xhr.onload = async function() {
+                if (this.status === 204) {
+                    setStatusText('Transcribing file...');
+                    try {
+                        let fileStatus = await getFile(uniqueFileNameWithoutExt + '.mp3', 45000, 3);
+                        if (fileStatus && fileStatus.statusCode === 204) {
+                            await downloadFile(uniqueFileNameWithoutExt, 'mp3'); // audio file
+                            await downloadFile(uniqueFileNameWithoutExt, 'txt'); // translated text file
+
+                            setView('editVideo');
+                        }
+                        else {
+                            resetState(`The files for ${uniqueFileName} are not yet available. Please check back later.`);
+                        }
+                    } catch (err) {
+                        resetState('There was an error in the request. Please try again later.');
+                    }
+                }
+                else {
+                    resetState('There was an error uploading this file. Please try again.');
+                }
             }
+        } else {
+            resetState(`Something went wrong with the upload. Are you uploading a video file?`);
+        }
+    }
+
+    async function getFile(fileName, msDelay, tries) {
+        const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+        let result;
+        while (tries > 0) {
+            try {
+                await delay(msDelay);
+                return await tryCheckForFile(fileName);
+            } catch (err) {
+                tries--;
+            }
+        }
+
+        return false;
+    }
+
+    async function tryCheckForFile(fileName) {
+        const body = {
+            "fileName": fileName,
+        };
+        const options = {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        };
+
+        let initialResponse = await fetch(`https://34ckmy75i8.execute-api.us-west-2.amazonaws.com/DevTest/checktranslationavailability`, options);
+        let jsonResponse = await initialResponse.json();
+        if (jsonResponse.statusCode === 404) {
+            throw 'file not available';
+        }
+        return jsonResponse;
+    }
+
+    async function downloadFile(fileName, fileExt) {
+        let downloadBody = {
+            fileName: `${fileName}.${fileExt}`,
+        };
+        let signedResponse = await getSignedUrl(true, downloadBody);
+        let jsonResponse = JSON.parse(signedResponse);
+        let signedUrl = jsonResponse.signedURL;
+
+        if (fileExt === 'txt') {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', signedUrl);
+            xhr.send();
+            xhr.onload = function () {
+                setTranslatedContentStr(this.responseText); // TODO: this doesn"t appear to actually be replacing the text area displayed in the UI
+            };
         }
     }
 
@@ -92,9 +173,8 @@ function Home() {
                         backgroundColor: 'transparent'
                     }}
                     >
-                        <p>
-                            Start transcribing PDF textbooks or videos by uploading the PDF containing scanned textbook pages or entering the URL for the video.
-                                </p>
+                        <p>Start transcribing PDF textbooks or videos by uploading the PDF containing scanned textbook pages or entering the URL for the video.</p>
+                        <p style={{ color: 'red' }}>{errorMessage}</p>
                     </Jumbotron>
                     <Container>
                         <Row>
@@ -142,7 +222,11 @@ function Home() {
                                                         <Col>
                                                             <Button
                                                                 disabled={!fileToUpload?.path}
-                                                                onClick={uploadFile}
+                                                                onClick={async (e) => {
+                                                                    e.stopPropagation();
+                                                                    await downloadFile('SpeedOfSoundTestVideo_1603756163178', 'txt');
+                                                                    setView('editVideo');
+                                                                }}
                                                                 variant="success"
                                                             >
                                                                 Next
@@ -191,10 +275,7 @@ function Home() {
                                             <Row >
                                                 <Col />
                                                 <Col>
-                                                    <Button onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setView('editVideo');
-                                                    }} variant="success">Next</Button>
+                                                    <Button onClick={uploadFile} variant="success">Next</Button>
                                                 </Col>
                                                 <Col />
                                             </Row>
@@ -276,7 +357,7 @@ Integer id ullamcorper urna, efficitur gravida nulla. Aenean vel dictum libero. 
                             height: '87%',
                             padding: '2em'
                         }}
-                        defaultValue={`
+                        defaultValue={translatedContentStr ?? `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque vulputate, leo in pretium lobortis, enim tortor maximus odio, in finibus velit nunc et enim. Curabitur laoreet erat quis ultrices vehicula. Nunc enim purus, mattis sed posuere id, tempus quis ipsum. Quisque at elit in felis feugiat iaculis. Nulla vehicula nec orci eu feugiat. Proin vel ornare diam. Proin imperdiet iaculis purus, ut porttitor tortor finibus vitae. Ut euismod eleifend orci, sit amet hendrerit purus ultrices sed. Donec eu nunc ut est fermentum finibus. Ut quam ipsum, ornare eget mi id, fringilla mattis velit. Aliquam ac ligula risus. In tincidunt tellus in convallis consectetur. Ut tincidunt ante pulvinar erat condimentum elementum. Proin non vehicula ante.
 
 Donec elementum vehicula leo, id elementum mauris blandit vel. Ut scelerisque ut dolor quis auctor. Donec ultrices, mi ac pellentesque tincidunt, libero mi molestie ante, vel interdum mauris neque vel nisi. Vestibulum at tincidunt ex. Aenean pharetra pretium posuere. Duis fermentum arcu magna, nec pulvinar enim blandit consectetur. Praesent cursus aliquet ligula ut congue. Nullam nec diam ac ligula malesuada condimentum. Proin aliquam varius eleifend.
