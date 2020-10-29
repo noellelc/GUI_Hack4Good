@@ -1,15 +1,15 @@
-import Amplify, { Auth } from 'aws-amplify';
+// import Amplify, { Auth } from 'aws-amplify';
 import React from 'react';
 import Routes from "./Routes";
 import './App.css';
 
-Amplify.configure({
-  Auth: {
-    region: '',
-    userPoolId: '',
-    userPoolWebClientId: ''
-  }
-});
+// Amplify.configure({
+//   Auth: {
+//     region: '',
+//     userPoolId: '',
+//     userPoolWebClientId: ''
+//   }
+// });
 
 const App = () => (
   <Routes />
@@ -18,6 +18,6 @@ const App = () => (
 
 
 // You can get the current config object
-const currentConfig = Auth.configure();
+// const currentConfig = Auth.configure();
 
 export default App;

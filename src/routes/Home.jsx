@@ -23,6 +23,7 @@ function Home() {
     const [statusText, setStatusText] = useState();
     const [errorMessage, setErrorMessage] = useState();
     const [translatedContentStr, setTranslatedContentStr] = useState();
+    const [translatedAudioUrl, setTranslatedAudioUrl] = useState();
 
     function resetState(errorMessage) {
         setView('choose');
@@ -114,7 +115,7 @@ function Home() {
 
     async function getFile(fileName, msDelay, tries) {
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-        let result;
+        // let result;
         while (tries > 0) {
             try {
                 await delay(msDelay);
@@ -142,27 +143,35 @@ function Home() {
         let initialResponse = await fetch(`https://34ckmy75i8.execute-api.us-west-2.amazonaws.com/DevTest/checktranslationavailability`, options);
         let jsonResponse = await initialResponse.json();
         if (jsonResponse.statusCode === 404) {
-            throw 'file not available';
+            throw new Error('file not available');
         }
         return jsonResponse;
     }
 
-    async function downloadFile(fileName, fileExt) {
+    async function getSignedUrlForTranslatedFile(fileName, fileExt) {
         let downloadBody = {
             fileName: `${fileName}.${fileExt}`,
         };
         let signedResponse = await getSignedUrl(true, downloadBody);
         let jsonResponse = JSON.parse(signedResponse);
-        let signedUrl = jsonResponse.signedURL;
 
-        if (fileExt === 'txt') {
+        return jsonResponse.signedURL;
+    }
+
+    async function downloadFile(fileName, fileExt) {
+        let signedUrl = await getSignedUrlForTranslatedFile(fileName, fileExt);
+
+        return new Promise((resolve, reject) => {
             var xhr = new XMLHttpRequest();
             xhr.open('GET', signedUrl);
             xhr.send();
-            xhr.onload = function () {
-                setTranslatedContentStr(this.responseText); // TODO: this doesn"t appear to actually be replacing the text area displayed in the UI
+            xhr.onload = () => {
+                resolve(xhr.response);
             };
-        }
+            xhr.onerror = () => {
+                reject(xhr.Error)
+            };
+        });
     }
 
     const renderStepOne = () => {
@@ -224,7 +233,12 @@ function Home() {
                                                                 disabled={!fileToUpload?.path}
                                                                 onClick={async (e) => {
                                                                     e.stopPropagation();
-                                                                    await downloadFile('SpeedOfSoundTestVideo_1603756163178', 'txt');
+                                                                    let translatedText = await downloadFile('SpeedOfSoundTestVideo_1603756163178', 'txt');
+                                                                    let translatedAudioUrl = await getSignedUrlForTranslatedFile('SpeedOfSoundTestVideo_1603756163178', 'mp3');                                                                    
+
+                                                                    setTranslatedContentStr(translatedText);
+                                                                    setTranslatedAudioUrl(translatedAudioUrl);
+
                                                                     setView('editVideo');
                                                                 }}
                                                                 variant="success"
@@ -341,23 +355,14 @@ Integer id ullamcorper urna, efficitur gravida nulla. Aenean vel dictum libero. 
                 <div style={{
                     flexGrow: '1'
                 }}>
-                    <iframe 
-                        title='video'
-                        width="100%"
-                        height="80%" 
-                        src={video || 'https://www.youtube.com/embed/YpXXV10q_CY/21s'}>
-                    </iframe>
-                </div>
-                <div style={{
-                    flexGrow: '1'
-                }}>
-                    <textarea
+                    <textarea 
+                        readOnly
                         style={{
                             width: '100%',
                             height: '87%',
                             padding: '2em'
                         }}
-                        defaultValue={translatedContentStr ?? `
+                        value={translatedContentStr ?? `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque vulputate, leo in pretium lobortis, enim tortor maximus odio, in finibus velit nunc et enim. Curabitur laoreet erat quis ultrices vehicula. Nunc enim purus, mattis sed posuere id, tempus quis ipsum. Quisque at elit in felis feugiat iaculis. Nulla vehicula nec orci eu feugiat. Proin vel ornare diam. Proin imperdiet iaculis purus, ut porttitor tortor finibus vitae. Ut euismod eleifend orci, sit amet hendrerit purus ultrices sed. Donec eu nunc ut est fermentum finibus. Ut quam ipsum, ornare eget mi id, fringilla mattis velit. Aliquam ac ligula risus. In tincidunt tellus in convallis consectetur. Ut tincidunt ante pulvinar erat condimentum elementum. Proin non vehicula ante.
 
 Donec elementum vehicula leo, id elementum mauris blandit vel. Ut scelerisque ut dolor quis auctor. Donec ultrices, mi ac pellentesque tincidunt, libero mi molestie ante, vel interdum mauris neque vel nisi. Vestibulum at tincidunt ex. Aenean pharetra pretium posuere. Duis fermentum arcu magna, nec pulvinar enim blandit consectetur. Praesent cursus aliquet ligula ut congue. Nullam nec diam ac ligula malesuada condimentum. Proin aliquam varius eleifend.
@@ -377,14 +382,9 @@ Integer id ullamcorper urna, efficitur gravida nulla. Aenean vel dictum libero. 
                 <div style={{
                     flexGrow: '1'
                 }}>
-                    <textarea
-                        style={{
-                            width: '100%',
-                            height: '87%',
-                            padding: '2em'
-                        }}
-                        defaultValue={``}
-                    ></textarea>
+                    <audio controls>
+                        <source src={translatedAudioUrl} type="audio/mpeg" />
+                    </audio>
                 </div>
             </div>
         </>);
